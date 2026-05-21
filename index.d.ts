@@ -2,12 +2,24 @@ import { RefObject } from "react";
 
 export interface ReactGoogleAutocompleteProps {
   onPlaceSelected?: (
-    places: google.maps.places.PlaceResult,
-    ref: RefObject<HTMLInputElement>,
-    autocompleteRef: RefObject<google.maps.places.Autocomplete>
+    place: google.maps.places.Place,
+    element: HTMLElement,
+    autocompleteRef: RefObject<HTMLElement>
   ) => void;
-  inputAutocompleteValue?: string;
-  options?: google.maps.places.AutocompleteOptions;
+  options?: {
+    fields?: string[];
+    componentRestrictions?: { country: string | string[] };
+    types?: string[];
+    bounds?: google.maps.LatLngBounds | google.maps.LatLngBoundsLiteral;
+    strictBounds?: boolean;
+    includedPrimaryTypes?: string[];
+    includedRegionCodes?: string[];
+    locationBias?: google.maps.LatLngBounds | google.maps.LatLngBoundsLiteral | google.maps.CircleLiteral;
+    locationRestriction?: google.maps.LatLngBounds | google.maps.LatLngBoundsLiteral;
+    origin?: google.maps.LatLng | google.maps.LatLngLiteral;
+    requestedLanguage?: string;
+    requestedRegion?: string;
+  };
   libraries?: string[];
   apiKey?: string;
   language?: string;
@@ -17,17 +29,19 @@ export interface ReactGoogleAutocompleteProps {
 export interface ReactGoogleAutocompleteInputProps
   extends ReactGoogleAutocompleteProps,
     React.DetailedHTMLProps<
-      React.HTMLAttributes<HTMLInputElement>,
-      HTMLInputElement
-    > {}
+      React.HTMLAttributes<HTMLElement>,
+      HTMLElement
+    > {
+  placeholder?: string;
+}
 
 export default function ReactGoogleAutocomplete<T extends any>(
   props: ReactGoogleAutocompleteInputProps & T
 ): JSX.Element;
 
-export function usePlacesWidget<T = null>(
+export function usePlacesWidget<T extends HTMLElement = HTMLElement>(
   props: ReactGoogleAutocompleteProps
 ): {
   ref: RefObject<T>;
-  autocompleteRef: RefObject<google.maps.places.Autocomplete>;
+  autocompleteRef: RefObject<HTMLElement>;
 };

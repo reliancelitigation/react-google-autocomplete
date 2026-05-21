@@ -1,7 +1,67 @@
-import React, { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback } from "react";
 
 import { loadGoogleMapScript, isBrowser } from "./utils";
 import { GOOGLE_MAP_SCRIPT_BASE_URL } from "./constants";
+
+const DEFAULT_FIELDS = [
+  "addressComponents",
+  "location",
+  "id",
+  "formattedAddress",
+];
+
+// Translate the legacy options shape (`types`, `componentRestrictions`,
+// `bounds`, `strictBounds`) to the new PlaceAutocompleteElement options.
+const buildElementOptions = ({
+  types,
+  componentRestrictions,
+  bounds,
+  strictBounds,
+  locationBias,
+  locationRestriction,
+  includedPrimaryTypes,
+  includedRegionCodes,
+  origin,
+  requestedLanguage,
+  requestedRegion,
+  language,
+}) => {
+  const opts = {};
+
+  if (includedPrimaryTypes) {
+    opts.includedPrimaryTypes = includedPrimaryTypes;
+  } else if (Array.isArray(types) && types.length) {
+    // Legacy collection aliases (`(cities)`, `(regions)`, `geocode`) are gone.
+    const filtered = types.filter((t) => !/^\(.*\)$/.test(t) && t !== "geocode");
+    if (filtered.length) opts.includedPrimaryTypes = filtered.slice(0, 5);
+  }
+
+  if (includedRegionCodes) {
+    opts.includedRegionCodes = includedRegionCodes;
+  } else if (componentRestrictions && componentRestrictions.country) {
+    const country = componentRestrictions.country;
+    opts.includedRegionCodes = Array.isArray(country) ? country : [country];
+  }
+
+  if (locationRestriction) {
+    opts.locationRestriction = locationRestriction;
+  } else if (bounds && strictBounds) {
+    opts.locationRestriction = bounds;
+  }
+
+  if (locationBias) {
+    opts.locationBias = locationBias;
+  } else if (bounds && !strictBounds) {
+    opts.locationBias = bounds;
+  }
+
+  if (origin) opts.origin = origin;
+  if (requestedLanguage || language)
+    opts.requestedLanguage = requestedLanguage || language;
+  if (requestedRegion) opts.requestedRegion = requestedRegion;
+
+  return opts;
+};
 
 export default function usePlacesWidget(props) {
   const {
@@ -9,25 +69,27 @@ export default function usePlacesWidget(props) {
     onPlaceSelected,
     apiKey,
     libraries = "places",
-    inputAutocompleteValue = "new-password",
     options: {
-      types = ["(cities)"],
-      componentRestrictions,
-      fields = [
-        "address_components",
-        "geometry.location",
-        "place_id",
-        "formatted_address",
-      ],
-      bounds,
+      fields = DEFAULT_FIELDS,
       ...options
     } = {},
     googleMapsScriptBaseUrl = GOOGLE_MAP_SCRIPT_BASE_URL,
     language,
   } = props;
-  const inputRef = useRef(null);
-  const event = useRef(null);
+  const elementRef = useRef(null);
   const autocompleteRef = useRef(null);
+  const selectListenerRef = useRef(null);
+  const onPlaceSelectedRef = useRef(onPlaceSelected);
+  const fieldsRef = useRef(fields);
+
+  useEffect(() => {
+    onPlaceSelectedRef.current = onPlaceSelected;
+  }, [onPlaceSelected]);
+
+  useEffect(() => {
+    fieldsRef.current = fields;
+  }, [fields]);
+
   const languageQueryParam = language ? `&language=${language}` : "";
   const googleMapsScriptUrl = `${googleMapsScriptBaseUrl}?libraries=${libraries}&key=${apiKey}${languageQueryParam}`;
 
@@ -37,127 +99,86 @@ export default function usePlacesWidget(props) {
   );
 
   useEffect(() => {
-    const config = {
-      ...options,
-      fields,
-      types,
-      bounds,
-    };
+    if (!elementRef.current || !isBrowser) return;
+    if (autocompleteRef.current) return;
 
-    if (componentRestrictions) {
-      config.componentRestrictions = componentRestrictions;
-    }
+    if (ref && !ref.current) ref.current = elementRef.current;
 
-    if (autocompleteRef.current || !inputRef.current || !isBrowser) return;
-
-    if (ref && !ref.current) ref.current = inputRef.current;
-
-    const handleAutoComplete = () => {
+    const wire = () => {
       if (typeof google === "undefined")
         return console.error(
           "Google has not been found. Make sure your provide apiKey prop."
         );
 
-      if (!google.maps?.places)
-        return console.error("Google maps places API must be loaded.");
-
-      if (!(inputRef.current instanceof HTMLInputElement))
-        return console.error("Input ref must be HTMLInputElement.");
-
-      autocompleteRef.current = new google.maps.places.Autocomplete(
-        inputRef.current,
-        config
-      );
-
-      if (autocompleteRef.current) {
-        event.current = autocompleteRef.current.addListener(
-          "place_changed",
-          () => {
-            if (onPlaceSelected && autocompleteRef && autocompleteRef.current) {
-              onPlaceSelected(
-                autocompleteRef.current.getPlace(),
-                inputRef.current,
-                autocompleteRef.current
-              );
-            }
-          }
+      if (!google.maps?.places?.PlaceAutocompleteElement)
+        return console.error(
+          "google.maps.places.PlaceAutocompleteElement not available. Make sure the places library is loaded."
         );
-      }
+
+      const el = elementRef.current;
+      if (!el) return;
+      autocompleteRef.current = el;
+
+      // Force light color-scheme so the element doesn't render its dark
+      // variant when the page/UA reports dark mode. This is a documented host
+      // style — not a shadow-DOM hack.
+      if (!el.style.colorScheme) el.style.colorScheme = "light";
+
+      const elOptions = buildElementOptions({ ...options, language });
+      Object.assign(el, elOptions);
+
+      selectListenerRef.current = async (event) => {
+        const cb = onPlaceSelectedRef.current;
+        if (!cb || !event?.placePrediction) return;
+        try {
+          const place = event.placePrediction.toPlace();
+          await place.fetchFields({ fields: fieldsRef.current });
+          cb(place, el, autocompleteRef);
+        } catch (err) {
+          console.error("Place.fetchFields failed:", err);
+        }
+      };
+      el.addEventListener("gmp-select", selectListenerRef.current);
     };
 
     if (apiKey) {
-      handleLoadScript().then(() => handleAutoComplete());
+      handleLoadScript().then(() => wire());
     } else {
-      handleAutoComplete();
+      wire();
     }
 
-    return () => (event.current ? event.current.remove() : undefined);
+    return () => {
+      const el = autocompleteRef.current;
+      if (el && selectListenerRef.current) {
+        el.removeEventListener("gmp-select", selectListenerRef.current);
+      }
+      autocompleteRef.current = null;
+      selectListenerRef.current = null;
+    };
   }, []);
 
+  // Push option changes to the live element.
   useEffect(() => {
-    if (autocompleteRef.current && onPlaceSelected) {
-      event.current = autocompleteRef.current.addListener("place_changed", function () {
-        if (onPlaceSelected && autocompleteRef && autocompleteRef.current) {
-          onPlaceSelected(autocompleteRef.current.getPlace(), inputRef.current, autocompleteRef.current);
-        }
-      });
-    }
-    return () => (event.current ? event.current.remove() : undefined);
-  }, [onPlaceSelected]);
-
-  // Autofill workaround adapted from https://stackoverflow.com/questions/29931712/chrome-autofill-covers-autocomplete-for-google-maps-api-v3/49161445#49161445
-  useEffect(() => {
-    // TODO find out why react 18(strict mode) hangs the page loading
-    if (
-      isBrowser &&
-      window.MutationObserver &&
-      inputRef.current &&
-      inputRef.current instanceof HTMLInputElement
-    ) {
-      const observerHack = new MutationObserver(() => {
-        observerHack.disconnect();
-
-        if (inputRef.current) {
-          inputRef.current.autocomplete = inputAutocompleteValue;
-        }
-      });
-      observerHack.observe(inputRef.current, {
-        attributes: true,
-        attributeFilter: ["autocomplete"],
-      });
-
-      return () => {
-        observerHack.disconnect(); // Cleanup
-      };
-    }
-  }, [inputAutocompleteValue]);
-
-  useEffect(() => {
-    if (autocompleteRef.current) {
-      autocompleteRef.current.setFields(fields);
-    }
-  }, [fields]);
-
-  useEffect(() => {
-    if (autocompleteRef.current) {
-      autocompleteRef.current.setBounds(bounds);
-    }
-  }, [bounds]);
-
-  useEffect(() => {
-    if (autocompleteRef.current) {
-      autocompleteRef.current.setComponentRestrictions(componentRestrictions);
-    }
-  }, [componentRestrictions]);
-
-  useEffect(() => {
-    if (autocompleteRef.current) {
-      autocompleteRef.current.setOptions(options);
-    }
-  }, [options]);
+    const el = autocompleteRef.current;
+    if (!el) return;
+    Object.assign(el, buildElementOptions({ ...options, language }));
+  }, [
+    options.types,
+    options.componentRestrictions,
+    options.bounds,
+    options.strictBounds,
+    options.locationBias,
+    options.locationRestriction,
+    options.includedPrimaryTypes,
+    options.includedRegionCodes,
+    options.origin,
+    options.requestedLanguage,
+    options.requestedRegion,
+    language,
+  ]);
 
   return {
-    ref: inputRef,
+    ref: elementRef,
     autocompleteRef,
   };
 }

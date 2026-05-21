@@ -3,16 +3,23 @@ import PropTypes from "prop-types";
 
 import usePlacesWidget from "./usePlacesWidget";
 
+// Renders the Google `<gmp-place-autocomplete>` Web Component directly so
+// className / style / placeholder / ref attach to the element itself (matching
+// the old behaviour where they attached to a host <input>). Note: the actual
+// text input is inside the element's shadow DOM, so some CSS (padding,
+// background) won't visibly pierce through. Layout properties (width, height,
+// border-radius, color-scheme) do work.
 function ReactGoogleAutocomplete(props) {
   const {
     onPlaceSelected,
     apiKey,
     libraries,
-    inputAutocompleteValue,
     options,
     googleMapsScriptBaseUrl,
     refProp,
     language,
+    // legacy prop, no longer applicable to the new element
+    inputAutocompleteValue: _unusedAutocompleteValue,
     ...rest
   } = props;
 
@@ -22,35 +29,32 @@ function ReactGoogleAutocomplete(props) {
     onPlaceSelected,
     apiKey,
     libraries,
-    inputAutocompleteValue,
     options,
-    language
+    language,
   });
 
-  return <input ref={ref} {...rest} />;
+  return React.createElement("gmp-place-autocomplete", { ref, ...rest });
 }
 
 ReactGoogleAutocomplete.propTypes = {
   apiKey: PropTypes.string,
   libraries: PropTypes.arrayOf(PropTypes.string),
   ref: PropTypes.oneOfType([
-    // Either a function
     PropTypes.func,
-    // Or anything shaped { current: any }
     PropTypes.shape({ current: PropTypes.any }),
   ]),
   googleMapsScriptBaseUrl: PropTypes.string,
   onPlaceSelected: PropTypes.func,
-  inputAutocompleteValue: PropTypes.string,
+  placeholder: PropTypes.string,
   options: PropTypes.shape({
     componentRestrictions: PropTypes.object,
-    bounds: PropTypes.object,
-    location: PropTypes.object,
-    offset: PropTypes.number,
+    includedPrimaryTypes: PropTypes.arrayOf(PropTypes.string),
+    includedRegionCodes: PropTypes.arrayOf(PropTypes.string),
+    locationBias: PropTypes.object,
+    locationRestriction: PropTypes.object,
     origin: PropTypes.object,
-    radius: PropTypes.number,
-    sessionToken: PropTypes.object,
     types: PropTypes.arrayOf(PropTypes.string),
+    fields: PropTypes.arrayOf(PropTypes.string),
   }),
   language: PropTypes.string,
 };
